@@ -1,0 +1,9 @@
+experiments/
+__pycache__/
+*.pyc
+.pytest_cache/
+replay.json
+submission.tar.gz
+kaggriculture-data/
+venv/
+.venv/
