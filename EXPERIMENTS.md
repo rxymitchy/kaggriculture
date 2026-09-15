@@ -40,6 +40,13 @@ Changes: operating cash floor ~$150, land after day 4 with $900 leftover, geese 
 - Fragile melon/strawberry sales not staggered vs a strong opponent.
 - No search/rollouts yet (`actTimeout=1s`).
 
-### Keep?
+## v4 — profit/speed (current)
 
-Yes. Beats starter/pass locally. Next: place/use geese, opponent glut avoidance tests vs a copy of ourselves, then pack `submission.tar.gz`.
+Dropped fixed wheat/goose/land habits. Plant the crop with the best live profit, hire more, skip weeds/land we cannot use, skip geese (they were dead capital).
+
+| Matchup | Games | Seeds | W/L/T | Avg $ | Opp avg $ |
+| --- | --- | --- | --- | --- | --- |
+| vs starter v3 | 4 | 1–4 | 4/0/0 | 35070 | 3574 |
+| vs starter v4 | 4 | 1–4 | 4/0/0 | **38939** | 3454 |
+
+Keep. Faster games (~10s vs ~15s) and ~$4k more vs starter.

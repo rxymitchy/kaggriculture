@@ -68,14 +68,19 @@ class CompetitiveAgent:
             hires_today += 1
             n_workers += 1
 
-        # 2. Land as an investment.
+        # 2. Land only if we already use current tiles AND labor can cover more.
         extra = len(state.me.unlocked_quadrants) - 1
+        n_busy_tiles = len(state.me.plants) + len(state.me.animals) + len(state.me.empty_structures)
+        unlocked_tiles = n_busy_tiles + len(state.me.empty) + len(state.me.weeds)
+        labor_cap = max(8, int(n_workers * cfg.plants_per_worker))
         if (
             extra < 3
             and state.day >= cfg.land_earliest_day
             and remaining >= cfg.land_min_remaining_days[min(extra, 2)]
             and remaining >= cfg.no_new_land_days
-            and unused_after_expand_needed(state)
+            and len(state.me.empty) <= cfg.land_unused_tile_trigger
+            and n_busy_tiles >= max(12, unlocked_tiles - 3)
+            and labor_cap > unlocked_tiles + 8
         ):
             cost = LAND_PRICES[extra]
             if money - cost >= cfg.land_min_cash_after and len(orders) < MAX_MARKET_ORDERS:
@@ -113,15 +118,19 @@ class CompetitiveAgent:
                     orders.append(["BUY_ANIMAL", "GOOSE", n_buy])
                     money -= 300 * n_buy
 
-        # 4. Seeds for planned plantings.
+        # 4. Seeds for the best-paying crop only, limited to what we can plant/water.
         crop = pick_crop_for_tile(state, cfg, state.market_prices, opp.crop_counts)
+        labor_cap = max(6, int(n_workers * cfg.plants_per_worker))
+        room = max(0, labor_cap - len(state.me.plants) - len(state.me.animals))
         empty_n = len([p for p in state.me.empty if p not in protect_positions(state, cfg.protect_shed_tiles)])
-        plant_budget = min(empty_n, max(1, n_workers))
+        turns_left = max(1, state.turns_per_day - state.hour)
+        water_debt = sum(1 for p in state.me.plants if not p.watered_today)
+        plant_budget = min(empty_n, room, n_workers, max(0, (n_workers * turns_left - water_debt) // 2))
         need = {c: 0 for c in CROPS}
-        # Ensure wheat seeds if we are wheat-short.
         wheat_have = state.me.crop_counts().get("WHEAT", 0)
-        wheat_target = max(cfg.min_wheat_tiles, int(cfg.wheat_tiles_per_animal * max(1, sum(state.me.animal_counts().values()))))
-        if wheat_have < wheat_target and remaining >= 3:
+        n_animals = sum(state.me.animal_counts().values())
+        wheat_target = int(cfg.wheat_tiles_per_animal * n_animals) if n_animals else cfg.min_wheat_tiles
+        if wheat_target and wheat_have < wheat_target and remaining >= 3:
             need["WHEAT"] = min(plant_budget, wheat_target - wheat_have)
             plant_budget -= need["WHEAT"]
         if plant_budget > 0:
@@ -236,88 +245,111 @@ class CompetitiveAgent:
             if a.yield_units > 0 and (a.yield_units >= 2 or a.yield_units >= cap - 1 or liquidate):
                 tasks.append(Task(845, a.pos, ["HARVEST"], key=f"aharv-{a.pos}"))
 
+        busy_core = (
+            sum(1 for p in state.me.plants if not p.watered_today)
+            + sum(1 for p in state.me.plants if plant_ready_to_harvest(p, state.day) and not one_time_should_wait(p, state.day))
+            + min(len(state.me.empty), 8)
+        )
+        spare_labor = busy_core < len(state.workers)
+
         # --- fertilizer collect ---
-        for a in state.me.animals:
-            if a.fertilizer_available:
-                tasks.append(Task(820, a.pos, ["COLLECT_FERTILIZER"], key=f"fert-{a.pos}"))
+        if spare_labor:
+            for a in state.me.animals:
+                if a.fertilizer_available:
+                    tasks.append(Task(820, a.pos, ["COLLECT_FERTILIZER"], key=f"fert-{a.pos}"))
 
         # --- care ---
-        for a in state.me.animals:
-            if a.cared_today:
-                continue
-            if a.animal == "GOOSE" and cfg.care_geese:
-                tasks.append(Task(780, a.pos, ["CARE"], key=f"care-{a.pos}"))
-            elif a.animal == "COW" and cfg.care_cows:
-                tasks.append(Task(760, a.pos, ["CARE"], key=f"care-{a.pos}"))
-            elif a.animal == "SHEEP" and cfg.care_sheep:
-                tasks.append(Task(760, a.pos, ["CARE"], key=f"care-{a.pos}"))
+        if spare_labor:
+            for a in state.me.animals:
+                if a.cared_today:
+                    continue
+                if a.animal == "GOOSE" and cfg.care_geese:
+                    tasks.append(Task(780, a.pos, ["CARE"], key=f"care-{a.pos}"))
+                elif a.animal == "COW" and cfg.care_cows:
+                    tasks.append(Task(760, a.pos, ["CARE"], key=f"care-{a.pos}"))
+                elif a.animal == "SHEEP" and cfg.care_sheep:
+                    tasks.append(Task(760, a.pos, ["CARE"], key=f"care-{a.pos}"))
 
         # --- fertilize high-value plants ---
-        fert_carried = state.carried_count("FERTILIZER")
-        fert_shed = state.shed_count("FERTILIZER")
-        if fert_carried == 0 and fert_shed > 0:
-            tasks.append(Task(770, shed_tiles[0], ["PICKUP", "FERTILIZER", min(3, fert_shed)], key="pickup-fert"))
-        for p in state.me.plants:
-            if p.is_fertilized(state.day):
-                continue
-            want = (
-                (p.crop == "STRAWBERRY" and cfg.fertilize_strawberry)
-                or (p.crop == "TOMATO" and cfg.fertilize_tomato)
-                or (p.crop == "MELON" and cfg.fertilize_melon)
-            )
-            if want:
-                tasks.append(Task(750, p.pos, ["FERTILIZE"], need_item="FERTILIZER", key=f"fz-{p.pos}"))
+        if spare_labor:
+            fert_carried = state.carried_count("FERTILIZER")
+            fert_shed = state.shed_count("FERTILIZER")
+            if fert_carried == 0 and fert_shed > 0:
+                tasks.append(Task(770, shed_tiles[0], ["PICKUP", "FERTILIZER", min(3, fert_shed)], key="pickup-fert"))
+            for p in state.me.plants:
+                if p.is_fertilized(state.day):
+                    continue
+                want = (
+                    (p.crop == "STRAWBERRY" and cfg.fertilize_strawberry)
+                    or (p.crop == "TOMATO" and cfg.fertilize_tomato)
+                    or (p.crop == "MELON" and cfg.fertilize_melon)
+                )
+                if want:
+                    tasks.append(Task(750, p.pos, ["FERTILIZE"], need_item="FERTILIZER", key=f"fz-{p.pos}"))
 
-        # --- place animals / build: pickup only when a free coop exists ---
+        # --- place animals / build only if we actually intend to run livestock ---
         geese_shed = state.shed_count("GOOSE")
         empty_coops = [s for s in state.me.empty_structures if s.kind == "COOP"]
-        for w in state.workers:
-            if w.inv_count("GOOSE") > 0:
-                if empty_coops:
-                    dest = nearest(w.pos, [s.pos for s in empty_coops])
-                    tasks.append(Task(935, dest, ["PLACE", "GOOSE"], key=f"place-goose-{dest}"))
-                else:
-                    empties = [p for p in state.me.empty if p not in protected]
-                    if empties:
-                        dest = nearest(w.pos, empties)
-                        tasks.append(Task(900, dest, ["BUILD_COOP"], key=f"build-coop-{dest}"))
-        if geese_shed > 0 and empty_coops:
-            n_pick = min(len(empty_coops), geese_shed, 4)
-            for i, st in enumerate(shed_tiles[:n_pick]):
-                tasks.append(Task(820, st, ["PICKUP", "GOOSE", 1], key=f"pickup-goose-{i}"))
-        elif geese_shed > 0 and remaining >= cfg.no_new_animals_days:
-            empties = [p for p in state.me.empty if p not in protected]
-            if empties:
-                tasks.append(Task(800, empties[0], ["BUILD_COOP"], key=f"build-coop-{empties[0]}"))
-            elif state.me.weeds:
-                tasks.append(Task(790, state.me.weeds[0], ["DIG"], key=f"dig-for-coop-{state.me.weeds[0]}"))
+        if cfg.max_geese > 0 or geese_shed > 0 or any(w.inv_count("GOOSE") > 0 for w in state.workers):
+            for w in state.workers:
+                if w.inv_count("GOOSE") > 0:
+                    if empty_coops:
+                        dest = nearest(w.pos, [s.pos for s in empty_coops])
+                        tasks.append(Task(935, dest, ["PLACE", "GOOSE"], key=f"place-goose-{dest}"))
+                    else:
+                        empties = [p for p in state.me.empty if p not in protected]
+                        if empties:
+                            dest = nearest(w.pos, empties)
+                            tasks.append(Task(900, dest, ["BUILD_COOP"], key=f"build-coop-{dest}"))
+            if geese_shed > 0 and empty_coops:
+                n_pick = min(len(empty_coops), geese_shed, 4)
+                for i, st in enumerate(shed_tiles[:n_pick]):
+                    tasks.append(Task(820, st, ["PICKUP", "GOOSE", 1], key=f"pickup-goose-{i}"))
+            elif geese_shed > 0 and remaining >= cfg.no_new_animals_days:
+                empties = [p for p in state.me.empty if p not in protected]
+                if empties:
+                    tasks.append(Task(800, empties[0], ["BUILD_COOP"], key=f"build-coop-{empties[0]}"))
+                elif state.me.weeds:
+                    tasks.append(Task(790, state.me.weeds[0], ["DIG"], key=f"dig-for-coop-{state.me.weeds[0]}"))
 
-        # --- plant ---
+        # --- plant what pays, only as many as we can water today ---
         crop_choice = pick_crop_for_tile(state, cfg, state.market_prices, opp.crop_counts)
+        labor_cap = max(6, int((1 + len(state.me.hands)) * cfg.plants_per_worker))
+        room = max(0, labor_cap - len(state.me.plants) - len(state.me.animals))
+        turns_left = max(0, state.turns_per_day - state.hour)
+        water_debt = sum(1 for p in state.me.plants if not p.watered_today)
+        can_plant_n = min(
+            room,
+            max(0, (len(state.workers) * turns_left - water_debt) // 2),
+        )
+        worker_pos = [w.pos for w in state.workers]
         empties = [p for p in state.me.empty if p not in protected]
-        # Prefer tiles closer to current workers / shed to reduce walking.
-        empties = sorted(empties, key=lambda p: manhattan(p, state.me.farmer))
+        empties = sorted(empties, key=lambda p: min(manhattan(p, wp) for wp in worker_pos))
         seeds = dict(state.seeds)
+        planted = 0
+        n_animals = sum(state.me.animal_counts().values())
+        wheat_target = int(cfg.wheat_tiles_per_animal * n_animals) if n_animals else cfg.min_wheat_tiles
         for pos in empties:
+            if planted >= can_plant_n:
+                break
             crop = crop_choice
-            # Force wheat if below target.
             wheat_have = state.me.crop_counts().get("WHEAT", 0)
-            wheat_target = max(cfg.min_wheat_tiles, int(cfg.wheat_tiles_per_animal * max(1, sum(state.me.animal_counts().values()))))
-            if wheat_have < wheat_target and seeds.get("WHEAT", 0) > 0:
+            if wheat_target and wheat_have < wheat_target and seeds.get("WHEAT", 0) > 0:
                 crop = "WHEAT"
             if seeds.get(crop, 0) <= 0:
-                # fallback any seed
                 crop = next((c for c, n in seeds.items() if n > 0), None)
             if not crop:
                 break
             if remaining < CROPS[crop]["first_yield_day"]:
                 continue
-            tasks.append(Task(720, pos, ["PLANT", crop], key=f"plant-{pos}"))
+            tasks.append(Task(885, pos, ["PLANT", crop], key=f"plant-{pos}"))
             seeds[crop] = seeds.get(crop, 0) - 1
+            planted += 1
 
-        # --- dig weeds ---
-        for pos in state.me.weeds:
-            tasks.append(Task(680, pos, ["DIG"], key=f"dig-{pos}"))
+        # --- dig weeds only if we have no empty tile left and still have plant room ---
+        if not state.me.empty and room > 0:
+            for pos in state.me.weeds:
+                tasks.append(Task(680, pos, ["DIG"], key=f"dig-{pos}"))
 
         # --- decaying leftover plants occupying land ---
         for p in state.me.plants:

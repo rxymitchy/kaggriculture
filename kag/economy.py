@@ -149,50 +149,45 @@ def best_crop(
 
 
 def pick_crop_for_tile(state: GameState, cfg: StrategyConfig, prices: dict[str, float], opp_counts: dict[str, int]) -> str:
+    """Choose the crop with the best expected profit given remaining time and live prices."""
     remaining = state.remaining_days
     my_counts = state.me.crop_counts()
-    n_plants = max(1, sum(my_counts.values()) + len(state.me.empty))
     n_animals = sum(state.me.animal_counts().values())
-    wheat_target = max(cfg.min_wheat_tiles, int(cfg.wheat_tiles_per_animal * max(1, n_animals)))
+    wheat_needed = int(cfg.wheat_tiles_per_animal * n_animals) if n_animals else 0
+    wheat_needed = max(wheat_needed, cfg.min_wheat_tiles)
     if remaining <= 2:
         return "WHEAT"
-    if remaining <= 4:
-        return "CARROT" if prices.get("CARROT", 0) >= 8 else "WHEAT"
-    if my_counts.get("WHEAT", 0) < wheat_target and remaining >= 3:
+    if wheat_needed and my_counts.get("WHEAT", 0) < wheat_needed and remaining >= 3:
         return "WHEAT"
 
-    def penalty(crop: str) -> float:
+    scored: list[tuple[float, str]] = []
+    for crop in CROPS:
+        if crop == "TOMATO" and cfg.tomato_share <= 0:
+            continue
+        price = float(prices.get(crop, 1) or 1)
+        ev = crop_net_value(crop, price, remaining, fertilized=False)
+        if not ev["can_plant"] or ev["net"] <= 0:
+            continue
         vis = opp_counts.get(crop, 0) + my_counts.get(crop, 0)
-        if crop in ("MELON", "STRAWBERRY") and vis >= cfg.melon_max_visible_total:
-            return cfg.opponent_glut_penalty
-        return 1.0
-
-    candidates = []
-    wheat_ev = crop_net_value("WHEAT", prices.get("WHEAT", 25), remaining)
-    carrot_ev = crop_net_value("CARROT", prices.get("CARROT", 35), remaining)
-    candidates.append((carrot_ev["per_day"] * penalty("CARROT"), "CARROT"))
-    candidates.append((wheat_ev["per_day"] * penalty("WHEAT") + 2, "WHEAT"))
-
-    melon_share = my_counts.get("MELON", 0) / n_plants
-    if (
-        remaining >= 11
-        and prices.get("MELON", 0) >= cfg.melon_min_price
-        and melon_share < cfg.melon_share
-        and (opp_counts.get("MELON", 0) + my_counts.get("MELON", 0)) < cfg.melon_max_visible_total
-    ):
-        ev = crop_net_value("MELON", prices.get("MELON", 1), remaining)
-        candidates.append((ev["per_day"] * 1.15, "MELON"))
-
-    berry_share = my_counts.get("STRAWBERRY", 0) / n_plants
-    if remaining >= 12 and prices.get("STRAWBERRY", 0) >= cfg.strawberry_min_price and berry_share < cfg.strawberry_share:
-        ev = crop_net_value("STRAWBERRY", prices.get("STRAWBERRY", 1), remaining)
-        candidates.append((ev["per_day"] * penalty("STRAWBERRY"), "STRAWBERRY"))
-
-    if remaining >= 10 and prices.get("TOMATO", 0) >= 20:
-        tomato_share = my_counts.get("TOMATO", 0) / n_plants
-        if tomato_share < cfg.tomato_share:
-            ev = crop_net_value("TOMATO", prices.get("TOMATO", 1), remaining)
-            candidates.append((ev["per_day"] * penalty("TOMATO"), "TOMATO"))
-
-    candidates.sort(reverse=True)
-    return candidates[0][1]
+        glut = 1.0
+        if crop in ("MELON", "STRAWBERRY", "MILK", "WOOL"):
+            if price < (cfg.melon_min_price if crop == "MELON" else cfg.strawberry_min_price if crop == "STRAWBERRY" else 20):
+                continue
+            if vis >= cfg.melon_max_visible_total:
+                glut = cfg.opponent_glut_penalty
+        # Speed-weighted: extra credit for fast cycles (high per_action).
+        score = 0.55 * ev["per_day"] + 0.45 * ev["per_action"]
+        score *= glut
+        n_plants = max(1, sum(my_counts.values()))
+        share = my_counts.get(crop, 0) / n_plants
+        if crop == "MELON" and share >= cfg.melon_share:
+            continue
+        if crop == "STRAWBERRY" and share >= cfg.strawberry_share:
+            continue
+        if crop == "TOMATO" and share >= max(0.01, cfg.tomato_share):
+            continue
+        scored.append((score, crop))
+    if not scored:
+        return "CARROT" if remaining >= 3 else "WHEAT"
+    scored.sort(reverse=True)
+    return scored[0][1]

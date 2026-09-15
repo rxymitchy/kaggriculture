@@ -1,25 +1,21 @@
-"""Bundle main.py + kag/ into a Kaggle tar.gz (< 100 MiB)."""
+"""Bundle a single-file main.py (Kaggle exec-safe) and optionally tar it."""
 
 from __future__ import annotations
 
 import os
 import tarfile
+import subprocess
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "submission.tar.gz")
 
 
 def main():
+    subprocess.check_call([sys.executable, os.path.join(ROOT, "scripts", "bundle_main.py")])
+    main_py = os.path.join(ROOT, "main.py")
     with tarfile.open(OUT, "w:gz") as tar:
-        tar.add(os.path.join(ROOT, "main.py"), arcname="main.py")
-        kag = os.path.join(ROOT, "kag")
-        for dirpath, _, files in os.walk(kag):
-            for fn in files:
-                if not fn.endswith(".py"):
-                    continue
-                full = os.path.join(dirpath, fn)
-                rel = os.path.relpath(full, ROOT).replace("\\", "/")
-                tar.add(full, arcname=rel)
+        tar.add(main_py, arcname="main.py")
     size = os.path.getsize(OUT)
     print(f"wrote {OUT} ({size} bytes, {size/1024/1024:.3f} MiB)")
 
