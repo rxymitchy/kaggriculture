@@ -50,8 +50,6 @@ def expected_ongoing_yield(crop: str, remaining_days: int, fertilized: bool) -> 
     interval = cd["interval"]
     max_prod = cd["max_yield"]
     productions = 0
-    # Production fires at end of day when next_day = planted + first + k*interval
-    # i.e. after `first` full days have elapsed, then every `interval` days, up to 4.
     days_needed = first
     while productions < max_prod and days_needed <= remaining_days:
         productions += 1
@@ -92,7 +90,6 @@ def animal_remaining_productions(animal: str, remaining_days: int) -> int:
     first = a["first_yield_day"]
     if remaining_days < first:
         return 0
-    # first production after `first` days, then every interval
     left = remaining_days - first
     return 1 + left // a["interval"]
 
@@ -107,15 +104,12 @@ def animal_net_value(
 ) -> dict:
     a = ANIMALS[animal]
     n_prod = animal_remaining_productions(animal, remaining_days)
-    # Care: roughly +1 extra unit per production if we care every day (geese),
-    # or + (interval) extra if cared on non-prod days too. Conservative: +0.7 if care.
     units_per = 1.0 + (0.9 if care else 0.0)
     product_units = n_prod * units_per
-    fert_units = max(0, remaining_days)  # 1/day if collected
-    feed_units = max(0, remaining_days)  # feed daily
+    fert_units = max(0, remaining_days)
+    feed_units = max(0, remaining_days)
     revenue = product_units * product_price + fert_units * min(fert_price, 80)
     cost = a["cost"] + wheat_feed_cost(wheat_price, feed_units)
-    # structure + place + daily feed/care/collect/harvest actions
     actions = 2 + remaining_days * (1.0 + (1.0 if care else 0.0) + 0.4)
     net = revenue - cost
     return {
@@ -140,7 +134,7 @@ def best_crop(
         ev = crop_net_value(crop, prices.get(crop, 1), remaining, fertilized=False)
         score = ev["per_day"] * opponent_penalty.get(crop, 1.0)
         if crop == "WHEAT":
-            score += 8  # feed option value
+            score += 8
         if not ev["can_plant"]:
             score = -1e9
         scored.append((score, crop))
@@ -149,45 +143,36 @@ def best_crop(
 
 
 def pick_crop_for_tile(state: GameState, cfg: StrategyConfig, prices: dict[str, float], opp_counts: dict[str, int]) -> str:
-    """Choose the crop with the best expected profit given remaining time and live prices."""
+    """Winning fill: melon spike, wheat cash, then strawberries on almost every tile."""
     remaining = state.remaining_days
     my_counts = state.me.crop_counts()
-    n_animals = sum(state.me.animal_counts().values())
-    wheat_needed = int(cfg.wheat_tiles_per_animal * n_animals) if n_animals else 0
-    wheat_needed = max(wheat_needed, cfg.min_wheat_tiles)
     if remaining <= 2:
         return "WHEAT"
-    if wheat_needed and my_counts.get("WHEAT", 0) < wheat_needed and remaining >= 3:
+
+    melon_price = float(prices.get("MELON", 250) or 0)
+    berry_price = float(prices.get("STRAWBERRY", 120) or 0)
+
+    if (
+        state.day <= 2
+        and my_counts.get("MELON", 0) < cfg.opening_melon_tiles
+        and remaining >= CROPS["MELON"]["first_yield_day"]
+        and melon_price >= cfg.melon_min_price
+    ):
+        return "MELON"
+
+    if state.day <= 4 and my_counts.get("WHEAT", 0) < cfg.opening_wheat_tiles and remaining >= 3:
         return "WHEAT"
 
-    scored: list[tuple[float, str]] = []
-    for crop in CROPS:
-        if crop == "TOMATO" and cfg.tomato_share <= 0:
-            continue
-        price = float(prices.get(crop, 1) or 1)
-        ev = crop_net_value(crop, price, remaining, fertilized=False)
-        if not ev["can_plant"] or ev["net"] <= 0:
-            continue
-        vis = opp_counts.get(crop, 0) + my_counts.get(crop, 0)
-        glut = 1.0
-        if crop in ("MELON", "STRAWBERRY", "MILK", "WOOL"):
-            if price < (cfg.melon_min_price if crop == "MELON" else cfg.strawberry_min_price if crop == "STRAWBERRY" else 20):
-                continue
-            if vis >= cfg.melon_max_visible_total:
-                glut = cfg.opponent_glut_penalty
-        # Speed-weighted: extra credit for fast cycles (high per_action).
-        score = 0.55 * ev["per_day"] + 0.45 * ev["per_action"]
-        score *= glut
-        n_plants = max(1, sum(my_counts.values()))
-        share = my_counts.get(crop, 0) / n_plants
-        if crop == "MELON" and share >= cfg.melon_share:
-            continue
-        if crop == "STRAWBERRY" and share >= cfg.strawberry_share:
-            continue
-        if crop == "TOMATO" and share >= max(0.01, cfg.tomato_share):
-            continue
-        scored.append((score, crop))
-    if not scored:
-        return "CARROT" if remaining >= 3 else "WHEAT"
-    scored.sort(reverse=True)
-    return scored[0][1]
+    if (
+        remaining >= 12
+        and melon_price >= cfg.melon_replant_min_price
+        and my_counts.get("MELON", 0) < min(6, cfg.opening_melon_tiles)
+        and opp_counts.get("MELON", 0) + my_counts.get("MELON", 0) < 12
+    ):
+        return "MELON"
+
+    if remaining >= 8 and berry_price >= cfg.strawberry_min_price:
+        return "STRAWBERRY"
+    if remaining >= 3:
+        return "CARROT"
+    return "WHEAT"

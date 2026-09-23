@@ -50,3 +50,27 @@ Dropped fixed wheat/goose/land habits. Plant the crop with the best live profit,
 | vs starter v4 | 4 | 1–4 | 4/0/0 | **38939** | 3454 |
 
 Keep. Faster games (~10s vs ~15s) and ~$4k more vs starter.
+
+## v5 — livestock-meta (current)
+
+First pass copied the winning replay too hard (20 animals, strawberries everywhere) and **lost money** (~$8.5k vs starter). That was a bug, not the meta.
+
+Current v5 is the **v4 crop engine** plus 2 cows, bought wheat feed, and an opening melon batch. Same “only plant what we can water / only buy land when packed” rules.
+
+| Matchup | Games | Seeds | W/L/T | Avg $ | Opp avg $ |
+| --- | --- | --- | --- | --- | --- |
+| vs starter v4 | 4 | 1–4 | 4/0/0 | 38939 | 3454 |
+| vs starter v5 | 4 | 1–4 | 4/0/0 | **38995** | 3615 |
+
+Keep. Same 4–0, slightly more cash. Next real jump is a bigger herd that we can actually feed.
+
+## v5-win-meta (current)
+
+Winning-bot money engine: 2 cows + 3 sheep opening, bought wheat, melon spike, strawberry fill, land on days 6/9/10, rehire 10–12 every morning. Feed is higher priority than water so the herd doesn’t starve. Do not buy extra animals that sit in the shed.
+
+| Matchup | Games | Seeds | W/L/T | Avg $ | Opp avg $ |
+| --- | --- | --- | --- | --- | --- |
+| vs starter v5 livestock-meta | 4 | 1–4 | 4/0/0 | 38995 | 3615 |
+| vs starter v5-win-meta | 4 | 1–4 | 4/0/0 | **76722** | 3612 |
+
+Keep. ~2× coins. Per-seed: 78478, 66865, 80011, 81533. Same hockey-stick as ~$100k replay bots (broke until berries, then a spike). Remaining gap is late berry deaths and unused tiles.

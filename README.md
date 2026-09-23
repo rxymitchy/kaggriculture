@@ -4,7 +4,7 @@ Private competitive bot for the [Kaggriculture](https://www.kaggle.com/competiti
 
 Two players run 10×10 farms for 30 days (720 turns). Winner is who has the most **coins in the bank**. Unsold shed inventory is worth nothing.
 
-**Current version: v4 profit-speed** (single-file `main.py` for Kaggle).
+**Current version: v5-win-meta** (single-file `main.py` for Kaggle).
 
 Repo: https://github.com/rxymitchy/kaggriculture (private)
 
@@ -13,36 +13,35 @@ Repo: https://github.com/rxymitchy/kaggriculture (private)
 Each turn the agent:
 
 1. Reads our farm, the opponent’s **visible** farm, market prices, and days left.
-2. Places up to 10 market orders: hire workers, maybe buy land, buy the best-paying seeds, sell shed goods.
-3. Lists farm jobs by urgency (don’t let plants die → harvest → plant → ignore busywork).
+2. Places up to 10 market orders: hire, animals, wheat feed, seeds, land, sell.
+3. Lists farm jobs by urgency (feed first → don’t let plants die → harvest berries → plant).
 4. Sends the nearest free worker to each job, or walks toward it.
 
-It is a greedy checklist, not a neural net. Kaggle gives **1 second** per action, so search/ML is not in this version.
+It is a greedy checklist, not a neural net. Kaggle gives **1 second** per action.
 
-## What’s different in v4
+## What’s different in v5-win-meta
 
-Older versions followed fixed habits (always wheat, always geese, always expand). Those lost money.
+Same playbook as the ~$100k winning Kaggle bots, with logistics that actually keep the farm alive:
 
-| Old habit (v1–v3) | v4 |
-| --- | --- |
-| Force ~6 wheat tiles | Wheat only if we have animals to feed |
-| Buy geese early | **No geese** — they sat in the shed unused (~$2,400 dead) |
-| Dig every weed / buy land when a bit full | Dig only if there is no empty tile; buy land only if the field is full **and** we have spare labor |
-| Plant anything we can afford | Score crops from **live price × remaining days × worker actions** |
-| Fertilize / care whenever possible | Skip those if harvest/water/plant is backed up |
-| Protect the shed tile from planting | Use every unlocked tile |
-| ~8 hires/day | ~10 hires/day; plant next to workers; only plant what we can water **today** |
+- **Opening:** 2 cows + 3 sheep, bought wheat, ~10 melon + wheat on the starting land, 4 hires
+- **Fill:** strawberries on most tiles once the opening is down (no 8% berry cap)
+- **Crew:** rehire 10–12 workers every morning (hands reset at night), max 4 hires per turn
+- **Land:** days 6 / 9 / 10 when we have the coins
+- **Feed before water** so the herd doesn’t starve while the berry field is thirsty
+- **Sell everything** except wheat for the animals we own
 
-Crop pick is price-aware: melon/strawberry only while their price is still high and the opponent is not already flooding that market. Late season it switches to fast crops (wheat/carrot) and sells everything.
+The old v5 only added 2 cows on top of the wheat/carrot engine (~$39k). This one runs the winning money engine.
 
 ### Local results vs Kaggle `starter` (4 games, seeds 1–4)
 
 | Version | Win | Avg $ | Opp avg $ |
 | --- | --- | --- | --- |
 | v3 adaptive | 4–0 | 35,070 | 3,574 |
-| **v4 profit-speed** | **4–0** | **38,939** | 3,454 |
+| v4 profit-speed | 4–0 | 38,939 | 3,454 |
+| v5 livestock-meta (2 cows + old crops) | 4–0 | 38,995 | 3,615 |
+| **v5-win-meta** | **4–0** | **76,722** | 3,612 |
 
-v1 (first full game) scored **$6** — geese pickup/drop loop plus a cash floor that blocked replanting. That is fixed.
+Seeds: $78.5k, $66.9k, $80.0k, $81.5k. About **2×** the previous bot. Top replay bots still print ~$96k–$119k, so there is room, but this is the same shape of game (broke until berries, then a hockey-stick).
 
 Kaggle leaderboard **600** is the default skill rating for a new bot, not farm money.
 
@@ -50,14 +49,14 @@ Kaggle leaderboard **600** is the default skill rating for a new bot, not farm m
 
 Workers, highest first:
 
-1. Water a plant that dies tonight / feed an animal that escapes tonight
-2. Pick up wheat if animals still need feeding
-3. Harvest decaying or ripe crops; drop produce at the shed (sell is a market order the same turn)
-4. Plant the best-paying crop on empty tiles near workers
-5. Routine watering
-6. Dig weeds only if we need the tile
+1. Feed animals / pick up wheat (before watering)
+2. Water a plant that dies tonight
+3. Place animals still in the shed
+4. Harvest ripe berries / melon; drop produce at the shed
+5. Plant strawberries (melon/wheat only in the opening)
+6. Care, fertilizer, weeds if labor is free
 
-Market order order: **hire → land (rare) → seeds → emergency wheat → sell**.
+Market order: **hire → sell → land → wheat feed → animals → seeds**.
 
 ## Layout
 
@@ -98,7 +97,7 @@ Upload **`main.py` only** (not the old multi-file tar). Validation runs your bot
 ```bash
 python scripts/pack_submission.py
 # then upload Desktop/main.py or:
-# kaggle competitions submit kaggriculture -f main.py -m "v4 profit-speed"
+# kaggle competitions submit kaggriculture -f main.py -m "v5-win-meta"
 ```
 
 Join the competition on the website first. 5 submits/day; only the latest 2 count on the ladder.

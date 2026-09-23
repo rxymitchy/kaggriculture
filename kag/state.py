@@ -244,6 +244,19 @@ class GameState:
     def wheat_available_for_feed(self) -> int:
         return self.shed_count("WHEAT") + self.carried_count("WHEAT")
 
+    def animal_owned(self, name: str) -> int:
+        return (
+            self.me.animal_counts().get(name, 0)
+            + self.shed_count(name)
+            + self.carried_count(name)
+        )
+
+    def livestock_heads(self) -> int:
+        return sum(self.animal_owned(a) for a in ANIMALS)
+
+    def holding_any_animal(self) -> bool:
+        return any(self.carried_count(a) > 0 for a in ANIMALS)
+
     def is_end_of_day_turn(self) -> bool:
         return (self.hour + 1) >= self.turns_per_day
 

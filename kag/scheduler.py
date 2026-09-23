@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .constants import ANIMALS
 from .movement import bfs_next_step, manhattan
 from .state import GameState, Worker
+
+_HOLDER_OPS = {"PLACE", "BUILD_COOP", "BUILD_PASTURE"}
 
 
 @dataclass
@@ -30,8 +33,15 @@ def assign(state: GameState, tasks: list[Task]) -> dict[int, list]:
         "COLLECT_FERTILIZER", "BUILD_COOP", "BUILD_PASTURE", "DIG", "PLACE",
     }
 
+    def holding_animal(w: Worker) -> bool:
+        return any(w.inv_count(a) > 0 for a in ANIMALS)
+
     def can_do(w: Worker, t: Task) -> bool:
         if t.need_item and w.inv_count(t.need_item) <= 0:
+            return False
+        op = t.action[0] if t.action else "PASS"
+        # DROP dumps the whole bag — never send a livestock carrier to dump produce.
+        if holding_animal(w) and op not in _HOLDER_OPS:
             return False
         return True
 

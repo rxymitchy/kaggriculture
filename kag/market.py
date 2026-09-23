@@ -44,12 +44,36 @@ def predicted_price(item: str, inventory: int, extra_sold: int = 0, extra_bought
 
 
 def sale_plan(state: GameState, cfg: StrategyConfig) -> list[tuple[str, int]]:
-    """Items currently in the shed that we should sell this turn."""
+    """Items currently in the shed that we should sell this turn.
+
+    Winning bots sell almost everything. Keep wheat for heads we own (including
+    animals still in the shed) and a little fertilizer for unfertilized berries.
+    """
     remaining = state.remaining_days
-    n_animals = sum(state.me.animal_counts().values())
+    n_animals = state.livestock_heads()
     wheat_keep = (n_animals + cfg.wheat_feed_reserve) if cfg.keep_wheat_for_feed else 0
     if remaining <= cfg.liquidation_days:
         wheat_keep = 0
+
+    fert_keep = 0
+    if remaining > cfg.liquidation_days and state.day >= 6 and state.money >= 80:
+        want_fert = 0
+        for p in state.me.plants:
+            if p.is_fertilized(state.day):
+                continue
+            if (
+                (p.crop == "STRAWBERRY" and cfg.fertilize_strawberry)
+                or (p.crop == "TOMATO" and cfg.fertilize_tomato)
+                or (p.crop == "MELON" and cfg.fertilize_melon)
+            ):
+                want_fert += 1
+        price = state.market_prices.get("FERTILIZER", 100)
+        if price < cfg.sell_fertilizer_if_price_ge:
+            fert_keep = min(want_fert, 12)
+        else:
+            fert_keep = min(want_fert, 4)
+        if state.wheat_available_for_feed() < n_animals:
+            fert_keep = 0
 
     orders = []
     for item in PRODUCTS:
@@ -63,25 +87,14 @@ def sale_plan(state: GameState, cfg: StrategyConfig) -> list[tuple[str, int]]:
                 orders.append((item, sell))
             continue
         if item == "FERTILIZER":
-            # Keep some for high-value crops unless price is good or endgame.
-            keep = 0
-            if remaining > cfg.endgame_days and price < cfg.sell_fertilizer_if_price_ge:
-                keep = min(have, 4)
-            sell = have - keep
+            sell = have - fert_keep
             if sell > 0:
                 orders.append((item, sell))
             continue
         if item in FRAGILE_PRODUCTS:
-            if remaining <= cfg.liquidation_days or price >= cfg.sell_fragile_if_price_ge:
-                n = min(have, cfg.max_sell_units_fragile if remaining > cfg.liquidation_days else have)
-                if n > 0:
-                    orders.append((item, n))
-            elif price <= 2 and remaining > 3:
-                # Hold a little if floor; town may lift it. Don't hold forever.
-                if have > 6:
-                    orders.append((item, have - 6))
-            else:
-                orders.append((item, min(have, max(1, have // 2))))
+            n = min(have, cfg.max_sell_units_fragile if remaining > cfg.liquidation_days else have)
+            if n > 0:
+                orders.append((item, n))
             continue
         if cfg.sell_staple_always:
             orders.append((item, have))
