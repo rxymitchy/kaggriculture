@@ -44,19 +44,15 @@ def predicted_price(item: str, inventory: int, extra_sold: int = 0, extra_bought
 
 
 def sale_plan(state: GameState, cfg: StrategyConfig) -> list[tuple[str, int]]:
-    """Items currently in the shed that we should sell this turn.
-
-    Winning bots sell almost everything. Keep wheat for heads we own (including
-    animals still in the shed) and a little fertilizer for unfertilized berries.
-    """
+    """Sell produce. Keep only wheat that animals will eat tonight/tomorrow."""
     remaining = state.remaining_days
     n_animals = state.livestock_heads()
-    wheat_keep = (n_animals + cfg.wheat_feed_reserve) if cfg.keep_wheat_for_feed else 0
+    wheat_keep = n_animals if cfg.keep_wheat_for_feed else 0
     if remaining <= cfg.liquidation_days:
         wheat_keep = 0
 
     fert_keep = 0
-    if remaining > cfg.liquidation_days and state.day >= 6 and state.money >= 80:
+    if remaining > cfg.liquidation_days and n_animals > 0 and state.money >= 80:
         want_fert = 0
         for p in state.me.plants:
             if p.is_fertilized(state.day):
@@ -69,10 +65,8 @@ def sale_plan(state: GameState, cfg: StrategyConfig) -> list[tuple[str, int]]:
                 want_fert += 1
         price = state.market_prices.get("FERTILIZER", 100)
         if price < cfg.sell_fertilizer_if_price_ge:
-            fert_keep = min(want_fert, 12)
+            fert_keep = min(want_fert, 6)
         else:
-            fert_keep = min(want_fert, 4)
-        if state.wheat_available_for_feed() < n_animals:
             fert_keep = 0
 
     orders = []

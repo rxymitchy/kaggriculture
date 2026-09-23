@@ -74,3 +74,18 @@ Winning-bot money engine: 2 cows + 3 sheep opening, bought wheat, melon spike, s
 | vs starter v5-win-meta | 4 | 1–4 | 4/0/0 | **76722** | 3612 |
 
 Keep. ~2× coins. Per-seed: 78478, 66865, 80011, 81533. Same hockey-stick as ~$100k replay bots (broke until berries, then a spike). Remaining gap is late berry deaths and unused tiles.
+
+## Kaggle audit (23 replays, Mitchell Luciana)
+
+11–12, avg **$52,572 vs $54,865**. Day-8 cash **$78 vs opponent $746**. ~37 thirsty plants. Bought 7,234 wheat as feed. Opponents grew wheat and sold milk/fert. The $77k vs starter did not transfer.
+
+## v6-cash-first (current)
+
+Throw out the winning-bot script. Wheat/carrot for early coins, packed land only after day 8 with leftover cash, no livestock dump, live-EV crops, tight labor cap.
+
+| Matchup | Games | Seeds | W/L/T | Avg $ | Day-8 cash |
+| --- | --- | --- | --- | --- | --- |
+| vs starter v5-win-meta | 4 | 1–4 | 4/0/0 | 76722 | ~$78 on Kaggle |
+| vs starter v6-cash-first | 4 | 1–4 | 4/0/0 | **33784** | **$3379–$3824** |
+
+Keep for Kaggle: the hole is closed. Final $ vs starter is lower because we stopped the berry dump that only beat `starter`.

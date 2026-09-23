@@ -143,36 +143,60 @@ def best_crop(
 
 
 def pick_crop_for_tile(state: GameState, cfg: StrategyConfig, prices: dict[str, float], opp_counts: dict[str, int]) -> str:
-    """Winning fill: melon spike, wheat cash, then strawberries on almost every tile."""
+    """Live EV with a cash-first bias. Not a scripted melon→berry fill."""
     remaining = state.remaining_days
-    my_counts = state.me.crop_counts()
+    my = state.me.crop_counts()
+    day = state.day
+    money = state.money
+    shops = set(state.shops)
+
     if remaining <= 2:
         return "WHEAT"
 
-    melon_price = float(prices.get("MELON", 250) or 0)
-    berry_price = float(prices.get("STRAWBERRY", 120) or 0)
+    scored: list[tuple[float, str]] = []
+    for crop in CROPS:
+        ev = crop_net_value(crop, float(prices.get(crop, 1) or 1), remaining, fertilized=False)
+        vis = opp_counts.get(crop, 0) + my.get(crop, 0)
+        glut = 1.0
+        if vis > 6:
+            glut = max(0.25, 1.0 - cfg.opponent_glut_penalty * (vis - 6) / 16.0)
+        score = ev["per_day"] * glut
+        if not ev["can_plant"]:
+            score = -1e9
 
-    if (
-        state.day <= 2
-        and my_counts.get("MELON", 0) < cfg.opening_melon_tiles
-        and remaining >= CROPS["MELON"]["first_yield_day"]
-        and melon_price >= cfg.melon_min_price
-    ):
-        return "MELON"
+        # Early game: turn $3000 into harvestable goods this week, not day-12 berries.
+        if day <= 6:
+            if crop in ("WHEAT", "CARROT"):
+                score *= 2.2
+            elif crop == "MELON":
+                if my.get("MELON", 0) >= cfg.opening_melon_tiles or money < 250:
+                    score *= 0.15
+                else:
+                    score *= 1.1
+            elif crop == "STRAWBERRY":
+                score *= 0.08
+            elif crop == "TOMATO":
+                score *= 0.4
 
-    if state.day <= 4 and my_counts.get("WHEAT", 0) < cfg.opening_wheat_tiles and remaining >= 3:
-        return "WHEAT"
+        if crop == "STRAWBERRY" and (day < 8 or remaining < 12 or money < 400):
+            score = -1e9
+        melon_have = my.get("MELON", 0) + state.seed_count("MELON")
+        if crop == "MELON" and (day <= 7 or melon_have >= cfg.opening_melon_tiles):
+            score *= 0.12
+        if crop == "MELON" and melon_have >= cfg.opening_melon_tiles:
+            score = -1e9
+        if crop == "MELON" and vis >= cfg.melon_max_visible_total:
+            score = -1e9
+        if crop == "TOMATO" and remaining < 12:
+            score *= 0.4
 
-    if (
-        remaining >= 12
-        and melon_price >= cfg.melon_replant_min_price
-        and my_counts.get("MELON", 0) < min(6, cfg.opening_melon_tiles)
-        and opp_counts.get("MELON", 0) + my_counts.get("MELON", 0) < 12
-    ):
-        return "MELON"
+        if "PET_CAFE" in shops and crop == "CARROT":
+            score *= 1.25
+        if any(s in shops for s in ("BRUNCH_SPOT", "ICE_CREAM_SHOP", "SMOOTHIE_SHOP", "FARMERS_MARKET")) and crop == "STRAWBERRY":
+            score *= 1.12
+        if any(s in shops for s in ("PIZZA_SHOP",)) and crop == "TOMATO":
+            score *= 1.15
 
-    if remaining >= 8 and berry_price >= cfg.strawberry_min_price:
-        return "STRAWBERRY"
-    if remaining >= 3:
-        return "CARROT"
-    return "WHEAT"
+        scored.append((score, crop))
+    scored.sort(reverse=True)
+    return scored[0][1] if scored else "WHEAT"

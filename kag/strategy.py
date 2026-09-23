@@ -1,4 +1,4 @@
-"""Winning-bot money engine: livestock opening, melon spike, strawberry fill, full expansion."""
+"""Cash-first farm: live-EV crops, packed land, delayed livestock."""
 
 from __future__ import annotations
 
@@ -25,8 +25,19 @@ def animal_targets(state: GameState, cfg: StrategyConfig) -> dict[str, int]:
     owned = {a: state.animal_owned(a) for a in ANIMALS}
     if remaining < cfg.no_new_animals_days:
         return owned
-    cows = cfg.opening_cows if remaining >= 10 else 0
-    sheep = cfg.opening_sheep if remaining >= 10 else 0
+    cows = 0
+    sheep = 0
+    # Cash first. Animals only after wheat/carrot have already printed coins.
+    if (
+        state.day >= cfg.animal_earliest_day
+        and state.money >= cfg.animal_min_cash
+        and remaining >= 12
+        and not any(a.dies_tonight_if_unfed() for a in state.me.animals)
+    ):
+        cows = min(2, cfg.max_cows)
+    if state.day >= 10 and state.money >= 1800 and remaining >= 12:
+        cows = min(cfg.max_cows, 4)
+        sheep = min(cfg.max_sheep, 2)
     return {
         "COW": max(owned["COW"], cows),
         "SHEEP": max(owned["SHEEP"], sheep),
@@ -41,22 +52,15 @@ def hire_wanted(state: GameState, cfg: StrategyConfig) -> int:
         return min(4, 1 + len(state.me.hands))
     if state.day == 0:
         return 1 + cfg.opening_hires
-    if n_quad >= 4 or state.day >= 8:
+    if n_quad >= 3 or state.day >= 8:
         return cfg.target_hires
-    if n_quad >= 2 or state.day >= 3:
-        return max(10, cfg.target_hires - 2)
-    return 8
+    if state.day >= 3:
+        return max(8, cfg.target_hires - 2)
+    return 6
 
 
 def plants_allowed(n_workers: int, n_animals: int, cfg: StrategyConfig) -> int:
-    # Water/feed first. 12 workers can hold ~60 tiles; overplanting kills berries.
-    if n_workers >= 12:
-        ppw = 6.0
-    elif n_workers >= 8:
-        ppw = 5.0
-    else:
-        ppw = 3.5
-    return max(8, int(n_workers * ppw) - n_animals)
+    return max(6, int(n_workers * min(3.5, cfg.plants_per_worker)) - n_animals)
 
 
 def _place_room(state: GameState, animal: str) -> int:
@@ -99,9 +103,9 @@ class CompetitiveAgent:
         hire_budget = 0.0
         wprice = float(state.market_prices.get("WHEAT", 25) or 25)
         heads_now = state.livestock_heads()
-        if state.day <= 1:
-            heads_now = max(heads_now, cfg.opening_cows + cfg.opening_sheep)
-        feed_cash_need = max(0, heads_now + cfg.wheat_feed_reserve - state.wheat_available_for_feed()) * wprice
+        feed_cash_need = 0.0
+        if heads_now:
+            feed_cash_need = max(0, heads_now + cfg.wheat_feed_reserve - state.wheat_available_for_feed()) * wprice
         while n_workers < wanted and len(orders) < hire_cap:
             cost = hire_cost(hires_today)
             if money - cost < 0:
@@ -124,32 +128,26 @@ class CompetitiveAgent:
             orders.append(["SELL", item, n])
             sold.add(item)
 
-        # 3. Land like winning bots: day 6 / 9 / 10 when we have the coins.
+        # 3. Land only when the current field is packed and leftover cash stays usable.
         extra = len(state.me.unlocked_quadrants) - 1
         land_cost = LAND_PRICES[extra] if extra < 3 else 10**9
         packed = len(state.me.empty) <= cfg.land_unused_tile_trigger
-        land_day = 6 if extra == 0 else 9 if extra == 1 else 10
-        timed = extra < 3 and state.day >= land_day
         can_land = (
             extra < 3
+            and packed
             and state.day >= cfg.land_earliest_day
             and remaining >= cfg.land_min_remaining_days[min(extra, 2)]
             and remaining >= cfg.no_new_land_days
-            and (packed or timed)
-            and money >= land_cost + max(cfg.land_min_cash_after, feed_cash_need + 200)
-            and (heads_now == 0 or state.wheat_available_for_feed() >= heads_now)
+            and money >= land_cost + cfg.land_min_cash_after
         )
         if can_land and len(orders) < MAX_MARKET_ORDERS:
             orders.append(["BUY_LAND"])
             money -= land_cost
+        bought_land = any(o[0] == "BUY_LAND" for o in orders)
 
-        # 4. Wheat feed buffer (bought, not grown).
+        # 4. Bought wheat only for animals we already own. Grow feed instead of stocking 300 units.
         heads = state.livestock_heads()
-        if state.day <= 1:
-            heads = max(heads, cfg.opening_cows + cfg.opening_sheep)
-        wheat_want = heads + cfg.wheat_feed_reserve if heads else 0
-        if state.day == 0:
-            wheat_want = min(max(wheat_want, 6), 10)
+        wheat_want = (heads + cfg.wheat_feed_reserve) if heads else 0
         wheat_have = state.wheat_available_for_feed()
         sold_wheat = any(item == "WHEAT" for item, n in sells if n > 0)
         if wheat_want > wheat_have and not sold_wheat and len(orders) < MAX_MARKET_ORDERS:
@@ -158,12 +156,17 @@ class CompetitiveAgent:
                 orders.append(["BUY_PRODUCT", "WHEAT", max_n])
                 money -= wprice * max_n
 
-        # 5. Animals with cash already in the bank. Never buy while heads sit in the shed.
+        # 5. Animals only after the crop engine is printing (see animal_targets).
         unplaced = sum(state.shed_count(a) + state.carried_count(a) for a in ANIMALS)
-        if unplaced == 0 and remaining >= cfg.no_new_animals_days and money > reserve + 300:
-            buy_plan = [("COW", cfg.max_cows_buy_per_turn), ("SHEEP", cfg.max_sheep_buy_per_turn), ("GOOSE", cfg.max_geese_buy_per_turn)]
-            if state.day == 0:
-                buy_plan = [("COW", cfg.opening_cows), ("SHEEP", 1)]
+        field_busy = len(state.me.empty) > 10
+        if (
+            not bought_land
+            and not field_busy
+            and unplaced == 0
+            and remaining >= cfg.no_new_animals_days
+            and money > max(reserve + 400, cfg.animal_min_cash)
+        ):
+            buy_plan = [("COW", cfg.max_cows_buy_per_turn), ("SHEEP", cfg.max_sheep_buy_per_turn)]
             for animal, cap in buy_plan:
                 if cap <= 0 or len(orders) >= MAX_MARKET_ORDERS - 1:
                     break
@@ -181,7 +184,7 @@ class CompetitiveAgent:
                 orders.append(["BUY_ANIMAL", animal, max_buy])
                 money -= unit * max_buy
 
-        # 6. Seeds: melon/wheat opening, then strawberries to fill.
+        # 6. Seeds from live EV. Opening bias is wheat/carrot, not a berry dump.
         reserved_barns = max(0, sum(targets.values()) - sum(state.me.animal_counts().values()) - len(state.me.empty_structures))
         empty_n = max(0, len(state.me.empty) - reserved_barns)
         labor = plants_allowed(n_workers, sum(state.me.animal_counts().values()), cfg)
@@ -189,25 +192,40 @@ class CompetitiveAgent:
         plant_budget = min(empty_n, room)
         need: dict[str, int] = {}
         my = state.me.crop_counts()
-        if remaining >= CROPS["MELON"]["first_yield_day"] and state.day <= 3:
-            m = max(0, cfg.opening_melon_tiles - my.get("MELON", 0) - state.seed_count("MELON"))
-            need["MELON"] = min(plant_budget, m)
-            plant_budget -= need["MELON"]
-        if remaining >= 3 and state.day <= 4:
+        if remaining >= 3 and state.day <= 5:
             w = max(0, cfg.opening_wheat_tiles - my.get("WHEAT", 0) - state.seed_count("WHEAT"))
             need["WHEAT"] = min(plant_budget, w)
             plant_budget -= need["WHEAT"]
+            carrots = getattr(cfg, "opening_carrot_tiles", 0)
+            if carrots and plant_budget > 0:
+                c = max(0, carrots - my.get("CARROT", 0) - state.seed_count("CARROT"))
+                need["CARROT"] = min(plant_budget, c)
+                plant_budget -= need["CARROT"]
+            if remaining >= CROPS["MELON"]["first_yield_day"] and plant_budget > 0:
+                m = max(0, cfg.opening_melon_tiles - my.get("MELON", 0) - state.seed_count("MELON"))
+                need["MELON"] = min(plant_budget, m)
+                plant_budget -= need["MELON"]
         crop = pick_crop_for_tile(state, cfg, state.market_prices, opp.crop_counts)
-        if crop == "MELON" and my.get("MELON", 0) + state.seed_count("MELON") >= 12:
-            crop = "STRAWBERRY" if remaining >= 8 else "WHEAT"
+        if crop == "MELON" and (state.day <= 7 or my.get("MELON", 0) + state.seed_count("MELON") >= cfg.opening_melon_tiles):
+            crop = "CARROT" if remaining >= 3 else "WHEAT"
         if plant_budget > 0 and remaining >= CROPS[crop]["first_yield_day"]:
             need[crop] = need.get(crop, 0) + max(0, plant_budget - state.seed_count(crop))
-        for c in ("MELON", "WHEAT", "STRAWBERRY", "CARROT", "TOMATO"):
+        melon_have = my.get("MELON", 0) + state.seed_count("MELON") + need.get("MELON", 0)
+        if melon_have > cfg.opening_melon_tiles and state.day <= 8:
+            overflow = melon_have - cfg.opening_melon_tiles
+            need["MELON"] = max(0, need.get("MELON", 0) - overflow)
+            need["WHEAT"] = need.get("WHEAT", 0) + overflow
+        op_floor = cfg.min_operating_cash if remaining > cfg.liquidation_days else 0.0
+        if bought_land:
+            op_floor = max(op_floor, 800.0)
+        if remaining > 8:
+            op_floor = max(op_floor, 400.0)
+        for c in ("WHEAT", "CARROT", "MELON", "STRAWBERRY", "TOMATO"):
             n = need.get(c, 0)
             if n <= 0 or len(orders) >= MAX_MARKET_ORDERS:
                 continue
             cost_u = CROPS[c]["seed"]
-            buy = min(n, max(0, int((money - reserve) // cost_u)))
+            buy = min(n, max(0, int((money - max(reserve, op_floor)) // cost_u)))
             if buy > 0:
                 orders.append(["BUY_SEED", c, buy])
                 money -= cost_u * buy
@@ -342,9 +360,13 @@ class CompetitiveAgent:
                     tasks.append(Task(pri, p.pos, ["HARVEST"], key=f"harv-{p.pos}"))
             else:
                 waiting = one_time_should_wait(p, state.day) and remaining > 2
+                if state.money < 800 and p.crop in ("WHEAT", "CARROT"):
+                    waiting = False
                 if liquidate or not waiting:
                     if p.yield_units > 0:
                         pri = 912 if p.age(state.day) >= CROPS[p.crop]["max_yield_day"] else 882
+                        if p.crop in ("WHEAT", "CARROT") and state.money < 800:
+                            pri = 930
                         tasks.append(Task(pri, p.pos, ["HARVEST"], key=f"harv-{p.pos}"))
         for a in state.me.animals:
             cap = ANIMALS[a.animal]["max_held"]
@@ -379,19 +401,24 @@ class CompetitiveAgent:
         room = max(0, labor - len(state.me.plants))
         turns_left = max(0, state.turns_per_day - state.hour)
         water_debt = sum(1 for p in state.me.plants if not p.watered_today)
-        can_plant_n = min(room, len(empties), max(0, n_workers * turns_left - water_debt))
+        dying = sum(1 for p in state.me.plants if p.dies_tonight_if_unwatered())
+        can_plant_n = min(room, len(empties), max(0, n_workers * max(1, turns_left - 1) - water_debt - dying))
         plant_empties = [p for p in empties if p not in reserved_build]
-        plant_empties = sorted(plant_empties, key=lambda p: min(manhattan(p, wp) for wp in worker_pos))
+        hub = (4, 4)
+        plant_empties = sorted(
+            plant_empties,
+            key=lambda p: (min(manhattan(p, wp) for wp in worker_pos), manhattan(p, hub)),
+        )
         seeds = dict(state.seeds)
         planted = 0
         for pos in plant_empties:
             if planted >= can_plant_n:
                 break
             crop = crop_choice
-            if state.day <= 2 and seeds.get("MELON", 0) > 0 and state.me.crop_counts().get("MELON", 0) < cfg.opening_melon_tiles:
-                crop = "MELON"
-            elif state.day <= 4 and seeds.get("WHEAT", 0) > 0 and state.me.crop_counts().get("WHEAT", 0) < cfg.opening_wheat_tiles:
+            if state.day <= 5 and seeds.get("WHEAT", 0) > 0 and state.me.crop_counts().get("WHEAT", 0) < cfg.opening_wheat_tiles:
                 crop = "WHEAT"
+            elif state.day <= 5 and seeds.get("CARROT", 0) > 0 and state.me.crop_counts().get("CARROT", 0) < getattr(cfg, "opening_carrot_tiles", 0):
+                crop = "CARROT"
             if seeds.get(crop, 0) <= 0:
                 crop = next((c for c, n in seeds.items() if n > 0), None)
             if not crop:
