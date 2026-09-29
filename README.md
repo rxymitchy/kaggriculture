@@ -4,7 +4,7 @@ Private competitive bot for the [Kaggriculture](https://www.kaggle.com/competiti
 
 Two players run 10×10 farms for 30 days (720 turns). Winner is who has the most **coins in the bank**. Unsold shed inventory is worth nothing.
 
-**Current version: v6-cash-first** (single-file `main.py` for Kaggle).
+**Current version: v7-ranch** (single-file `main.py` for Kaggle).
 
 Repo: https://github.com/rxymitchy/kaggriculture (private)
 
@@ -12,73 +12,55 @@ Repo: https://github.com/rxymitchy/kaggriculture (private)
 
 Each turn the agent:
 
-1. Reads our farm, the opponent’s **visible** farm, market prices, and days left.
-2. Places up to 10 market orders: hire, sell, land (only if packed), maybe cows later, seeds.
-3. Lists farm jobs by urgency (don’t let plants die → harvest wheat/carrot for cash → plant).
-4. Sends the nearest free worker to each job, or walks toward it.
+1. Reads our farm, the opponent's **visible** farm, market prices, and days left.
+2. Builds a **price forecast** for every product: our output, the opponent's output (measured from how the market stock moved yesterday), what the town eats, and stock we still hold.
+3. Scores each possible buy (goose, cow, sheep, land, melon, wheat/carrot) by the money it returns before the game ends — including how much a new head lowers the price for the heads we already own.
+4. Lists farm jobs with a value (feed, care, collect fertilizer, harvest, water, plant, build, place) and matches workers to jobs by **value minus walking distance**, with a bonus for finishing the tile a worker is standing on.
 
-It is a greedy checklist, not a neural net. Kaggle gives **1 second** per action.
+It is a forecast + greedy planner, not a neural net. A turn takes ~3 ms (max ~40 ms); Kaggle allows 1 second.
 
-## What’s different in v6-cash-first
+## Why v7 (41 Kaggle replays of v6)
 
-v5-win-meta copied the ~$100k replay playbook (cows+sheep day 1, melon, then strawberries everywhere). Locally vs `starter` it printed **$77k**. On Kaggle (23 games) it went **11–12**, avg **$52.6k vs $54.9k**, because it was **broke through day 8** (~$78 in the bank vs opponents ~$746) and tried to catch up with a late berry spike.
+v6-cash-first went 22–19 on Kaggle but made little money: one land purchase, ~35 plants, **no animals**, 37k idle worker turns and 7.6k walks to the shed. The top opponents made their money from animals (fertilizer, milk, eggs, wool) and staged land.
 
-That was overfitting. v6 throws the script out:
+What the installed rules say (and v6 ignored):
 
-- **Days 0–7:** wheat + carrot (pay in 2–4 days). Keep ~$2.2k–$3.8k in the bank. No livestock dump, no 60 strawberries.
-- **Land:** only when the current field is packed, leftover ≥ $800, not before day 8.
-- **Animals:** none until the field is busy again and we still have ≥ $2k. Never the same turn as land.
-- **Crops:** live price × days left × opponent glut — not a melon→berry checklist.
-- **Labor cap:** plant only what we can water. Replays had ~37 thirsty plants; that is a burned $100 seed.
+- Every animal gives **1 fertilizer per day** from the first night; a goose pays back its $300 in ~2–3 days.
+- **Feed + care** on the same day adds +1 unit on the next production night: goose ~2 eggs/day, cow ~3 milk per 2 days.
+- Carried items **drop into the shed automatically at night** — mid-day shed trips are wasted unless the shed would overflow or it's the last day.
+- Selling is **per unit**, each unit lowers the price. Eggs, wheat and fertilizer hold price well; milk, wool and strawberries crash after ~60–75 extra units.
 
-### Local vs Kaggle `starter` (4 games, seeds 1–4)
+v7 is built on those rules, not on copying one bot.
 
-| Version | Win | Avg $ | Day-8 cash (seed 1) |
+## Local results (opponent pool, both seats)
+
+`starter` alone is too weak to judge a bot (v5 beat it by $77k and still went 11–12 on Kaggle). v7 is tested against a pool: `starter`, our old v4/v5/v6 (pulled from git), and a **mirror match** (v7 vs v7 on a shared market).
+
+| Version | Wins (no mirror) | Avg $ | Mirror avg $ |
 | --- | --- | --- | --- |
-| v4 profit-speed | 4–0 | 38,939 | — |
-| v5-win-meta (Kaggle 11–12) | 4–0 | 76,722 | **$78** in real games |
-| **v6-cash-first** | **4–0** | **33,784** | **$3,379–$3,824** |
+| v6-cash-first (seeds 1–3) | 8/24 | 24,561 | 24,396 |
+| **v7-ranch (seeds 1–3)** | **24/24** | **83,766** | **61,741** |
+| **v7-ranch (held-out seeds 7–10)** | **32/32** | **88,123** | **63,170** |
 
-Final $ vs starter is lower on purpose. The old $77k was a day-12 berry dump that only works against a weak opponent. Against real bots we were already behind $4k by day 20. v6 is built to **not fall in a hole** early.
-
-Kaggle leaderboard **600** is default skill, not coins.
-
-## How a turn is prioritized
-
-Workers, highest first:
-
-1. Water a plant that dies tonight
-2. Harvest wheat/carrot once they pay (don’t wait if we need cash)
-3. Plant the live-EV crop next to workers
-4. Feed / place animals only if we actually own some
-5. Care, fertilizer, weeds if labor is free
-
-Market: **hire → sell → land (packed only) → feed wheat → animals → seeds**. Never drain the bank below operating cash.
+Held-out seeds were never used while building v7.
 
 ## Layout
 
 - `main.py` — **Kaggle submission**. One file, `def agent(obs, config=None)`. Bundled from `kag/`.
-- `kag/` — source of truth: `state`, `economy`, `market`, `scheduler`, `strategy`, `config`
-- `simulation.py` / `experiments.py` / `evaluation.py` — local matches
+- `kag/ranch.py` — v7 brain: forecast (`Outlook`), tile plan, jobs, worker matching, market orders
+- `kag/` — shared helpers: `constants`, `state`, `farm`, `market`, `movement` (older `strategy.py` = v6)
+- `scripts/pool_eval.py` — pool evaluation: `python scripts/pool_eval.py [main.py|ranch:k=v+k=v] [n_seeds] [opps] [first_seed]`
+- `scripts/trace_ranch.py` / `scripts/probe_ranch.py` — one-game daily trace / planner internals
+- `scripts/audit_my_replays.py`, `scripts/study_top_opps.py` — Kaggle replay audits
+- `scripts/bundle_main.py` — concatenates `kag/` into `main.py` (Kaggle `exec()`s the file, so `__file__` and package imports fail)
 - `tests/` — mechanics + env parity (`kaggle-environments==1.32.7`)
-- `scripts/bundle_main.py` — concatenates `kag/` into `main.py` (required: Kaggle `exec()`s the file, so `__file__` and package imports fail)
-- `scripts/pack_submission.py` — rebuilds `main.py` and `submission.tar.gz`
-- `NOTES_ENV.md` — spec vs installed interpreter
 - `EXPERIMENTS.md` — version log
 
 ## Local test
 
-Needs `kaggle-environments` (Kaggriculture env). On Windows, a full pip install can fail on long paths; `--no-deps` plus Flask/jsonschema/numpy/pydantic/gymnasium is enough.
-
 ```bash
 python -m unittest tests.test_mechanics tests.test_env_parity
-python experiments.py --games 4 --opp starter --us balanced --seed0 1
-```
-
-Full 720-turn smoke (uses bundled `main.py`, same as Kaggle load):
-
-```bash
-python -c "from kaggle_environments import make; env=make('kaggriculture', configuration={'episodeSteps':720,'seed':1}); env.run(['main.py','starter']); print([(s.status,s.reward) for s in env.steps[-1]])"
+python scripts/pool_eval.py main.py 3 "starter,v4,v5,v6,self"
 ```
 
 After editing `kag/`, rebuild the submission file:
@@ -89,25 +71,24 @@ python scripts/bundle_main.py
 
 ## Submit to Kaggle
 
-Upload **`main.py` only** (not the old multi-file tar). Validation runs your bot against itself.
+Upload **`main.py` only**. Validation runs your bot against itself.
 
 ```bash
-python scripts/pack_submission.py
-# then upload Desktop/main.py or:
-# kaggle competitions submit kaggriculture -f main.py -m "v6-cash-first"
+# kaggle competitions submit kaggriculture -f main.py -m "v7-ranch"
 ```
 
-Join the competition on the website first. 5 submits/day; only the latest 2 count on the ladder.
+5 submits/day; only the latest 2 count on the ladder.
 
 ## Env details that matter
 
-The written Kaggle spec is close, but the **installed interpreter** wins when they differ. Highlights:
+The installed interpreter wins when it differs from the written spec:
 
-- Melon bonus window is ages 6–12 in code (`max_yield_day=12`); unfertilized cap is still 6 at age 10
-- Shop names are `PIZZA_SHOP`, not `"Pizza Shop"`
 - New plants start `consecutive_unwatered=1` — plant and skip water the same day → weed that night
-- `FEED` / `FERTILIZE` use **worker inventory**; `SELL` uses the **shed**
-- Locked tiles are walkable; first hire spawns on locked NE `(5,4)`
+- Animals produce their base unit even unfed; 2 unfed days in a row → the animal escapes
+- `FEED` / `FERTILIZE` use **worker inventory**; `SELL` uses the **shed**; unit actions run before market orders in the same turn
+- Shed cap 100: overflow at the nightly drop is destroyed
+- Fertilizer has no town demand — it only goes down as both players sell it
+- Locked tiles are walkable; hands spawn on shed-access tiles
 - `actTimeout` is 1 second
 
 See `NOTES_ENV.md` for the full table.

@@ -79,7 +79,7 @@ Keep. ~2× coins. Per-seed: 78478, 66865, 80011, 81533. Same hockey-stick as ~$1
 
 11–12, avg **$52,572 vs $54,865**. Day-8 cash **$78 vs opponent $746**. ~37 thirsty plants. Bought 7,234 wheat as feed. Opponents grew wheat and sold milk/fert. The $77k vs starter did not transfer.
 
-## v6-cash-first (current)
+## v6-cash-first
 
 Throw out the winning-bot script. Wheat/carrot for early coins, packed land only after day 8 with leftover cash, no livestock dump, live-EV crops, tight labor cap.
 
@@ -89,3 +89,23 @@ Throw out the winning-bot script. Wheat/carrot for early coins, packed land only
 | vs starter v6-cash-first | 4 | 1–4 | 4/0/0 | **33784** | **$3379–$3824** |
 
 Keep for Kaggle: the hole is closed. Final $ vs starter is lower because we stopped the berry dump that only beat `starter`.
+
+## Kaggle audit (41 replays of v6)
+
+22–19 but low coins. Early cash was fine (day 8 $3.7k vs $0.9k) then fell behind by day 12 ($1.4k vs $5.4k). One land purchase per game, ~35 plants, 2 cows total, no CARE / COLLECT_FERTILIZER, 37k PASS and 7.6k DROP turns. Top opponents: 6–13 animals with care + fertilizer, 2 extra quadrants around days 6–12.
+
+New eval: a pool (`scripts/pool_eval.py`) of starter + old v4/v5/v6 from git + mirror, both seats. v6 in the pool: **8/24, $24.6k** — it lost every game to v4 and v5. `starter`-only testing had hidden that.
+
+## v7-ranch (current)
+
+New brain in `kag/ranch.py`. Price forecast per product (own supply + opponent supply measured from market-stock changes + town demand + our held stock); every buy scored by discounted marginal profit to game end; tile plan reserves only the tiles the buy plan needs; staged land when the plan is crowded or cash is idle; job values matched to workers by value − 5×distance with a stay-on-tile bonus; no mid-day shed trips unless overflow / last day.
+
+| Step | Pool wins (no mirror) | Avg $ | Mirror $ |
+| --- | --- | --- | --- |
+| first ranch (flat forecast) | 22/24 | 70,486 | 64,788 |
+| + held stock, marginal glut, discount | 24/24 | 71,679 | 46,386 |
+| + measured opponent supply, labor incl. walking, buy plan → tiles, idle-cash land, stay bonus | 24/24 | **83,766** | **61,741** |
+| + fertilizer reuse on young wheat | 24/24 | 81,665 | 60,188 (reverted, no gain) |
+| held-out seeds 7–10 (final) | **32/32** | **88,123** | 63,170 |
+
+Glut-weight / discount sweep (0.3 / 0.7 / 1.0, discount 0.02 / 0.04) stayed within noise, so the middle values were kept instead of fitting.

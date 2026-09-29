@@ -15,12 +15,8 @@ ORDER = [
     "movement.py",
     "state.py",
     "farm.py",
-    "inventory.py",
-    "economy.py",
     "market.py",
-    "opponent.py",
-    "scheduler.py",
-    "strategy.py",
+    "ranch.py",
 ]
 
 REL_IMPORT = re.compile(
@@ -43,7 +39,7 @@ from __future__ import annotations
 '''
 
 FOOTER = '''
-_AGENT = CompetitiveAgent()
+_AGENT = RanchAgent()
 
 
 def agent(obs, config=None):
@@ -62,8 +58,6 @@ def main():
             body = strip_module(f.read())
         parts.append(f"# === {name} ===\n")
         parts.append(body)
-        if name == "opponent.py":
-            parts.append("extract_opp = extract\n\n")
     parts.append(FOOTER)
     text = "".join(parts)
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:

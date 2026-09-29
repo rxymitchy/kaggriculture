@@ -249,10 +249,13 @@ def main():
                 st.flush()
 
     import sys
+    folder = sys.argv[1] if len(sys.argv) > 1 else FOLDER
+    tag = os.path.basename(os.path.normpath(folder)).replace(" ", "_")
+    out = out.replace("replay_audit.txt", f"replay_audit_{tag}.txt")
     f = open(out, "w", encoding="utf-8")
     sys.stdout = Tee(sys.__stdout__, f)
-    paths = sorted(glob(os.path.join(FOLDER, "*.json")))
-    print(f"found {len(paths)} replays in {FOLDER}")
+    paths = sorted(glob(os.path.join(folder, "*.json")))
+    print(f"found {len(paths)} replays in {folder}")
     rows = []
     for p in paths:
         print("reading", os.path.basename(p), flush=True)
