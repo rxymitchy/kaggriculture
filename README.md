@@ -1,12 +1,12 @@
 # Kaggriculture agent
 
-Private competitive bot for the [Kaggriculture](https://www.kaggle.com/competitions/kaggriculture) Kaggle simulation.
+A competitive bot for the [Kaggriculture](https://www.kaggle.com/competitions/kaggriculture) Kaggle simulation.
 
 Two players run 10×10 farms for 30 days (720 turns). Winner is who has the most **coins in the bank**. Unsold shed inventory is worth nothing.
 
 **Current version: v7-ranch** (single-file `main.py` for Kaggle).
 
-Repo: https://github.com/rxymitchy/kaggriculture (private)
+Repo: https://github.com/rxymitchy/kaggriculture 
 
 ## What it does
 
